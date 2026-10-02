@@ -39,7 +39,7 @@ const R = {
     if (!okEmail(email)) fail('Enter a valid email');
     if (pw.length < 8) fail('Password must be at least 8 characters');
     const { data: u, error } = await db.from('users').insert({ username, email, pass: await bcrypt.hash(pw, 10) }).select().single();
-    if (error) fail(error.code === '23505' ? 'Username or email already taken' : 'Could not create account', 409);
+    if (error) fail(error.code === '23505' ? 'Username or email already taken' : 'DEBUG: ' + error.message, 409);
     return { token: sign(u) };
   },
   async login(req, b) {
