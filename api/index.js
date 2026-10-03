@@ -82,7 +82,7 @@ const R = {
   // ---------- images ----------
   async feed(req) {
     const q = txt(req.query.q, 50).replace(/[%_,()]/g, '');
-    let s = db.from('images').select('id,title,path,users(username,tag,role),likes(count),comments(count)').order('created_at', { ascending: false }).limit(60);
+    let s = db.from('images').select('id,title,path,users!user_id(username,tag,role),likes(count),comments(count)').order('created_at', { ascending: false }).limit(60);
     if (q) s = s.ilike('title', `%${q}%`);
     const { data } = await s;
     return { images: (data || []).map(i => ({ id: i.id, title: i.title, url: url(i.path), user: i.users, likes: i.likes[0].count, comments: i.comments[0].count })) };
