@@ -89,8 +89,9 @@ const R = {
   },
   async image(req) {
     const me = await getUser(req, true), id = req.query.id;
-    const { data: i } = await db.from('images').select('*,users(username,tag,role),likes(count)').eq('id', id).maybeSingle();
-    if (!i) fail('Image not found', 404);
+   const { data: i, error: e1 } = await db.from('images').select('*,users(username,tag,role),likes(count)').eq('id', id).maybeSingle();
+  if (e1) fail('DEBUG: ' + e1.message, 500);
+  if (!i) fail('Image not found', 404);
     const { data: c } = await db.from('comments').select('id,body,created_at,user_id,users(username,tag,role)').eq('image_id', id).order('created_at');
     const { data: l } = me ? await db.from('likes').select('user_id').eq('image_id', id).eq('user_id', me.id) : { data: [] };
     return { image: { id: i.id, title: i.title, descr: i.descr, url: url(i.path), created_at: i.created_at, owner: i.user_id, user: i.users, likes: i.likes[0].count, liked: !!l.length }, comments: c || [] };
