@@ -39,3 +39,17 @@ td input,td select,td button{margin:.15rem 0}
 .pager a{padding:.4rem 1rem;border:1px solid var(--line);border-radius:7px;background:#fff}
 
 @media (prefers-reduced-motion:no-preference){.card{transition:border-color .15s}}
+
+/* profiles, videos, tabs */
+.card{position:relative}
+.card h3 a{color:var(--ink)}
+.vid{position:absolute;top:1rem;left:1rem;background:rgba(18,32,58,.88);color:#fff;font-size:.75rem;padding:.1rem .6rem;border-radius:99px}
+.view video{max-width:100%;max-height:75vh;display:block;background:#000;border-radius:3px}
+.user{font-weight:600}
+.profile{display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;margin-bottom:1.2rem}
+.profile h2{margin:0}
+.avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;background:var(--line);flex:none}
+.ph{display:grid;place-items:center;font-size:2.4rem;font-weight:800;color:#fff;background:var(--ac)}
+.tabs{display:flex;gap:.5rem;border-bottom:2px solid var(--line);margin-bottom:1rem}
+.tabs button{background:none;color:var(--mut);border-radius:0;border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs button.on{color:var(--ink);border-color:var(--ac)}
