@@ -143,7 +143,8 @@ async function upload() {
   const { tags } = await api('tags');
   page(`<h2>Upload</h2><form id="up" class="box"><input name="title" placeholder="Title" maxlength="100" required>
     <textarea name="descr" placeholder="Description (optional)" maxlength="1000"></textarea>
-    <div class="chips">${tags.map(t => `<label><input type="checkbox" name="tags" value="${esc(t)}"> ${esc(t)}</label>`).join('') || '<small>No tags available yet.</small>'}</div>
+    <div class="chips">${tags.map(t => `<label><input type="checkbox" name="tags" value="${esc(t)}"> ${esc(t)}</label>`).join('')}</div>
+    <input name="newtags" placeholder="Add tags, separated by commas (5 max)" maxlength="100">
     <input type="file" id="file" accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" required>
     <small>Images are resized automatically. Videos can be up to ${MAXV / 60} minutes and ${MAXB / 1048576} MB (MP4 works best).</small>
     <button>Upload</button><small id="st"></small><span class="msg"></span></form>`,
@@ -151,7 +152,8 @@ async function upload() {
       const file = $('#file').files[0], st = $('#st'), btn = f.querySelector('button');
       if (!file) throw new Error('Choose an image or a video');
       const sel = [...f.querySelectorAll('[name=tags]:checked')].map(c => c.value);
-      const body = { title: d.title, descr: d.descr, tags: sel };
+      const typed = (d.newtags || '').split(/[,\s]+/).map(t => t.replace(/^#/, '').toLowerCase()).filter(Boolean);
+      const body = { title: d.title, descr: d.descr, tags: [...new Set([...sel, ...typed])].slice(0, 5) };
       btn.disabled = true;
       try {
         if (file.type.startsWith('video/') || vtype(file).startsWith('video/')) {
