@@ -24,7 +24,18 @@ button.on{background:var(--ink)}button.danger{background:var(--bad)}
 textarea{min-height:84px;resize:vertical}.msg{color:var(--bad)}
 .tag{color:var(--tag)}small{color:var(--mut)}
 .cmt{background:var(--card);border-left:3px solid var(--ac);padding:.5rem .9rem;margin:.7rem 0}.cmt p{margin:.25rem 0}
-.row{display:flex;gap:.5rem;margin-bottom:1rem}.scroll{overflow-x:auto}
+.row{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}.scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;background:var(--card)}
 td,th{padding:.55rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+td input,td select,td button{margin:.15rem 0}
+
+/* post tags and paging */
+.chips{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}
+.chips a{padding:.2rem .8rem;border:1px solid var(--line);border-radius:99px;background:#fff;color:var(--ink)}
+.chips a:hover{text-decoration:none;border-color:var(--ac)}
+.chips a.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chips label,td label{display:inline-flex;gap:.3rem;align-items:center;margin-right:.5rem}
+.pager{display:flex;gap:1.2rem;justify-content:center;align-items:center;margin:1.5rem 0}
+.pager a{padding:.4rem 1rem;border:1px solid var(--line);border-radius:7px;background:#fff}
+
 @media (prefers-reduced-motion:no-preference){.card{transition:border-color .15s}}
