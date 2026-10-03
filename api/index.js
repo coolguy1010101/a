@@ -168,9 +168,8 @@ const R = {
       const { data } = await db.storage.from(VIDEOS).list(u.id, { search: video.split('/')[1] });
       if (!(data || []).some(f => f.name === video.split('/')[1])) fail('The video upload was not found. Please try again.');
     }
-    const { data: known } = await db.from('tags').select('name');
-    const tags = [...new Set([].concat(b.tags || []))].filter(t => (known || []).some(k => k.name === t)).slice(0, 5);
-    const path = `${u.id}/${Date.now()}.${img.ext}`;
+    const tags = [...new Set([].concat(b.tags || []).map(t => txt(t, 20).toLowerCase().replace(/^#/, '')))].filter(t => /^[a-z0-9-]{2,20}$/.test(t)).slice(0, 5);
+    if (tags.length) await db.from('tags').upsert(tags.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
     const { error } = await db.storage.from(BUCKET).upload(path, img.buf, { contentType: img.type });
     if (error) fail('Upload failed', 500);
     const { data } = await db.from('images').insert({ user_id: u.id, title, descr: txt(b.descr, 1000), path, tags, kind: video ? 'video' : 'image', video }).select('id').single();
