@@ -3,19 +3,28 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
-const BUCKET = 'images', JWT = process.env.JWT_SECRET;
+const BUCKET = 'images', VIDEOS = 'videos', JWT = process.env.JWT_SECRET;
 const fail = (m, c = 400) => { throw Object.assign(new Error(m), { c }); };
 const txt = (s, n) => String(s ?? '').trim().slice(0, n);
 const pub = u => ({ id: u.id, username: u.username, tag: u.tag, role: u.role });
 const url = p => db.storage.from(BUCKET).getPublicUrl(p).data.publicUrl;
+const vurl = p => db.storage.from(VIDEOS).getPublicUrl(p).data.publicUrl;
 const sign = u => jwt.sign({ id: u.id, tv: u.tv }, JWT, { expiresIn: '7d' });
 const banned = u => u.ban_until && new Date(u.ban_until) > new Date();
 const okEmail = e => /^\S+@\S+\.\S+$/.test(e);
 const RANK = { user: 0, staff: 1, senior: 2, owner: 3 };
 const LABEL = { user: null, staff: 'STAFF', senior: 'SENIOR STAFF', owner: 'OWNER' };
+const VEXT = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
 const rk = u => RANK[u.role] ?? 0;
 const can = (u, p) => rk(u) >= 2 || (rk(u) === 1 && (u.perms || []).includes(p));
 
+function readImage(s, max) {
+  const m = /^data:image\/(png|jpeg|webp|gif);base64,([\w+/=]+)$/.exec(s || '');
+  if (!m) fail('Unsupported image');
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length > max) fail('Image is too large');
+  return { buf, type: `image/${m[1]}`, ext: m[1] === 'jpeg' ? 'jpg' : m[1] };
+}
 async function getUser(req, optional) {
   try {
     const p = jwt.verify((req.headers.authorization || '').slice(7), JWT);
@@ -60,7 +69,7 @@ const R = {
   },
   async me(req) {
     const u = await getUser(req);
-    return { user: { ...pub(u), email: u.email, perms: u.perms || [] }, ban: banned(u) ? { until: u.ban_until, reason: u.ban_reason } : null };
+    return { user: { ...pub(u), email: u.email, perms: u.perms || [], bio: u.bio }, ban: banned(u) ? { until: u.ban_until, reason: u.ban_reason } : null };
   },
   async changepw(req, b) {
     const u = await authed(req); await sure(u, b.old);
@@ -83,20 +92,52 @@ const R = {
   },
   async deleteacct(req, b) {
     const u = await getUser(req); await sure(u, b.password);
-    const { data } = await db.from('images').select('path').eq('user_id', u.id);
-    if (data?.length) await db.storage.from(BUCKET).remove(data.map(r => r.path));
+    const { data } = await db.from('images').select('path,video').eq('user_id', u.id);
+    const files = (data || []).map(r => r.path), vids = (data || []).map(r => r.video).filter(Boolean);
+    if (u.avatar) files.push(u.avatar);
+    if (files.length) await db.storage.from(BUCKET).remove(files);
+    if (vids.length) await db.storage.from(VIDEOS).remove(vids);
     await db.from('users').delete().eq('id', u.id);
     return {};
   },
 
-  // ---------- images ----------
+  // ---------- profiles ----------
+  async profile(req) {
+    const { data: u } = await db.from('users').select('id,username,tag,role,bio,avatar,created_at').eq('username', txt(req.query.name, 20)).maybeSingle();
+    if (!u) fail('User not found', 404);
+    return { user: { ...pub(u), bio: u.bio, created_at: u.created_at, avatarUrl: u.avatar ? url(u.avatar) : null } };
+  },
+  async saveprofile(req, b) {
+    const u = await authed(req), upd = { bio: txt(b.bio, 300) || null };
+    if (b.avatar) {
+      const img = readImage(b.avatar, 3e5);
+      const path = `avatars/${u.id}-${Date.now()}.${img.ext}`;
+      const { error } = await db.storage.from(BUCKET).upload(path, img.buf, { contentType: img.type });
+      if (error) fail('Could not save the picture', 500);
+      if (u.avatar) await db.storage.from(BUCKET).remove([u.avatar]);
+      upd.avatar = path;
+    }
+    await db.from('users').update(upd).eq('id', u.id);
+    return {};
+  },
+  async clearprofile(req, b) {
+    const u = await authed(req, 'img'); await lower(u, b.id);
+    const { data } = await db.from('users').select('avatar').eq('id', b.id).maybeSingle();
+    if (data?.avatar) await db.storage.from(BUCKET).remove([data.avatar]);
+    await db.from('users').update({ bio: null, avatar: null }).eq('id', b.id);
+    return {};
+  },
+
+  // ---------- posts (images and videos) ----------
   async feed(req) {
-    const q = txt(req.query.q, 50).replace(/[%_,()]/g, ''), tag = txt(req.query.tag, 30), page = Math.max(1, +req.query.page || 1), N = 24;
-    let s = db.from('images').select('id,title,path,tags,users!user_id(username,tag,role),likes(count),comments(count)', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * N, page * N - 1);
+    const q = txt(req.query.q, 50).replace(/[%_,()]/g, ''), tag = txt(req.query.tag, 30), uid = txt(req.query.uid, 40);
+    const page = Math.max(1, +req.query.page || 1), N = 24;
+    let s = db.from('images').select('id,title,path,kind,tags,users!user_id(username,tag,role),likes(count),comments(count)', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * N, page * N - 1);
     if (q) s = s.ilike('title', `%${q}%`);
     if (tag) s = s.contains('tags', [tag]);
+    if (uid) s = s.eq('user_id', uid);
     const { data, count } = await s;
-    return { pages: Math.max(1, Math.ceil((count || 0) / N)), images: (data || []).map(i => ({ id: i.id, title: i.title, tags: i.tags, url: url(i.path), user: i.users, likes: i.likes[0].count, comments: i.comments[0].count })) };
+    return { total: count || 0, pages: Math.max(1, Math.ceil((count || 0) / N)), images: (data || []).map(i => ({ id: i.id, title: i.title, kind: i.kind, tags: i.tags, url: url(i.path), user: i.users, likes: i.likes[0].count, comments: i.comments[0].count })) };
   },
   async image(req) {
     const me = await getUser(req, true), id = req.query.id;
@@ -104,28 +145,43 @@ const R = {
     if (!i) fail('Image not found', 404);
     const { data: c } = await db.from('comments').select('id,body,created_at,user_id,users!user_id(username,tag,role)').eq('image_id', id).order('created_at');
     const { data: l } = me ? await db.from('likes').select('user_id').eq('image_id', id).eq('user_id', me.id) : { data: [] };
-    return { image: { id: i.id, title: i.title, descr: i.descr, tags: i.tags, url: url(i.path), created_at: i.created_at, owner: i.user_id, user: i.users, likes: i.likes[0].count, liked: !!l.length }, comments: c || [] };
+    return { image: { id: i.id, title: i.title, descr: i.descr, tags: i.tags, kind: i.kind, video: i.video ? vurl(i.video) : null, url: url(i.path), created_at: i.created_at, owner: i.user_id, user: i.users, likes: i.likes[0].count, liked: !!l.length }, comments: c || [] };
   },
+  // Step 1 of a video upload: hand the browser a one-time URL to upload straight to Supabase
+  async signvideo(req, b) {
+    const u = await authed(req);
+    if (!Object.hasOwn(VEXT, b.type)) fail('Use an MP4, WebM or MOV video');
+    const path = `${u.id}/${Date.now()}.${VEXT[b.type]}`;
+    const { data, error } = await db.storage.from(VIDEOS).createSignedUploadUrl(path);
+    if (error) fail('Could not start the upload', 500);
+    return { path, signedUrl: data.signedUrl };
+  },
+  // For videos, b.data is the thumbnail and b.video is the path from signvideo
   async upload(req, b) {
     const u = await authed(req), title = txt(b.title, 100);
-    const m = /^data:image\/(png|jpeg|webp|gif);base64,([\w+/=]+)$/.exec(b.data || '');
     if (!title) fail('Add a title');
-    if (!m) fail('Unsupported image');
+    const img = readImage(b.data, 4e6);
+    let video = null;
+    if (b.video) {
+      video = String(b.video);
+      if (!new RegExp(`^${u.id}/\\d+\\.(mp4|webm|mov)$`).test(video)) fail('Invalid video');
+      const { data } = await db.storage.from(VIDEOS).list(u.id, { search: video.split('/')[1] });
+      if (!(data || []).some(f => f.name === video.split('/')[1])) fail('The video upload was not found. Please try again.');
+    }
     const { data: known } = await db.from('tags').select('name');
     const tags = [...new Set([].concat(b.tags || []))].filter(t => (known || []).some(k => k.name === t)).slice(0, 5);
-    const buf = Buffer.from(m[2], 'base64');
-    if (buf.length > 4e6) fail('Image is too large (4 MB max)');
-    const path = `${u.id}/${Date.now()}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
-    const { error } = await db.storage.from(BUCKET).upload(path, buf, { contentType: `image/${m[1]}` });
+    const path = `${u.id}/${Date.now()}.${img.ext}`;
+    const { error } = await db.storage.from(BUCKET).upload(path, img.buf, { contentType: img.type });
     if (error) fail('Upload failed', 500);
-    const { data } = await db.from('images').insert({ user_id: u.id, title, descr: txt(b.descr, 1000), path, tags }).select('id').single();
+    const { data } = await db.from('images').insert({ user_id: u.id, title, descr: txt(b.descr, 1000), path, tags, kind: video ? 'video' : 'image', video }).select('id').single();
     return { id: data.id };
   },
   async delimage(req, b) {
     const u = await authed(req);
-    const { data: i } = await db.from('images').select('user_id,path').eq('id', b.id).maybeSingle();
+    const { data: i } = await db.from('images').select('user_id,path,video').eq('id', b.id).maybeSingle();
     if (!i || (i.user_id !== u.id && !can(u, 'img'))) fail('Not allowed', 403);
     await db.storage.from(BUCKET).remove([i.path]);
+    if (i.video) await db.storage.from(VIDEOS).remove([i.video]);
     await db.from('images').delete().eq('id', b.id);
     return {};
   },
@@ -234,7 +290,7 @@ const R = {
   },
 };
 
-const GET = new Set(['feed', 'image', 'me', 'users', 'tags', 'news']);
+const GET = new Set(['feed', 'image', 'me', 'users', 'tags', 'news', 'profile']);
 module.exports = async (req, res) => {
   try {
     const a = req.query.a;
