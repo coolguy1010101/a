@@ -170,11 +170,11 @@ const R = {
     }
     const tags = [...new Set([].concat(b.tags || []).map(t => txt(t, 20).toLowerCase().replace(/^#/, '')))].filter(t => /^[a-z0-9-]{2,20}$/.test(t)).slice(0, 5);
     if (tags.length) await db.from('tags').upsert(tags.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
+    const path = `${u.id}/${Date.now()}.${img.ext}`;
     const { error } = await db.storage.from(BUCKET).upload(path, img.buf, { contentType: img.type });
     if (error) fail('Upload failed', 500);
     const { data, error: e2 } = await db.from('images').insert({ user_id: u.id, title, descr: txt(b.descr, 1000), path, tags, kind: video ? 'video' : 'image', video }).select('id').single();
-if (e2) fail('DEBUG: ' + e2.message, 500);
-return { id: data.id };
+    if (e2) fail('Could not save the post', 500);
     return { id: data.id };
   },
   async delimage(req, b) {
