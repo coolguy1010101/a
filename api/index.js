@@ -299,6 +299,6 @@ module.exports = async (req, res) => {
     res.status(200).json(await R[a](req, req.body || {}));
   } catch (e) {
     if (!e.c) console.error(e);
-    res.status(e.c || 500).json({ error: e.c ? e.message : 'Server error' });
+   res.status(e.c || 500).json({ error: e.c ? e.message : 'Server error: ' + e.message });
   }
 };
