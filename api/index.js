@@ -18,6 +18,42 @@ const VEXT = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov
 const rk = u => RANK[u.role] ?? 0;
 const can = (u, p) => rk(u) >= 2 || (rk(u) === 1 && (u.perms || []).includes(p));
 
+// ---------- rate limiting and IP blacklist ----------
+// Requests per IP per minute. Everything is also capped at 150/min in total.
+const LIMITS = { login: 10, register: 5, upload: 6, signvideo: 6, comment: 10, report: 5, like: 30, saveprofile: 6, addtag: 10 };
+const ipOf = req => (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown';
+const ipCache = new Map(); // ip -> { bad, until }; keeps database lookups down on warm servers
+const IP_BLOCKED = 'Your IP address has been blocked for sending too many requests.';
+
+async function guard(req, a) {
+  const ip = ipOf(req), now = Date.now(), win = Math.floor(now / 60000);
+  let hit = ipCache.get(ip);
+  if (!hit || hit.until < now) {
+    const { data } = await db.from('banned_ips').select('ip').eq('ip', ip).maybeSingle();
+    hit = { bad: !!data, until: now + 30000 };
+    if (ipCache.size > 5000) ipCache.clear();
+    ipCache.set(ip, hit);
+  }
+  if (hit.bad) fail(IP_BLOCKED, 403);
+  for (const [bucket, max] of [['all', 150], ...(LIMITS[a] ? [[a, LIMITS[a]]] : [])]) {
+    const { data: n, error } = await db.rpc('rate_hit', { p_ip: ip, p_bucket: bucket, p_win: win });
+    if (error) { console.error(error); return; } // fails open if the SQL has not been run yet
+    if (n <= max) continue;
+    let ban = n >= max * 5; // flooding: blocked straight away
+    if (n === max + 1) { // first blocked request this minute = one strike; 5 strikes in an hour = blocked
+      const { data: s } = await db.rpc('rate_strike', { p_ip: ip });
+      ban = ban || s >= 5;
+    }
+    if (ban) {
+      await db.from('banned_ips').upsert({ ip, reason: `Rate limit exceeded (${bucket})` });
+      ipCache.set(ip, { bad: true, until: now + 30000 });
+      fail(IP_BLOCKED, 403);
+    }
+    fail('Too many requests. Please slow down and try again in a minute.', 429);
+  }
+  if (Math.random() < 0.02) await db.from('rate_hits').delete().lt('win', win - 120);
+}
+
 function readImage(s, max) {
   const m = /^data:image\/(png|jpeg|webp|gif);base64,([\w+/=]+)$/.exec(s || '');
   if (!m) fail('Unsupported image');
@@ -160,6 +196,8 @@ const R = {
   async upload(req, b) {
     const u = await authed(req), title = txt(b.title, 100);
     if (!title) fail('Add a title');
+    const { data: dup } = await db.from('images').select('id').eq('user_id', u.id).eq('title', title).gte('created_at', new Date(Date.now() - 60000).toISOString()).limit(1);
+    if (dup?.length) fail('You just posted this. Please wait a minute before posting it again.', 429);
     const img = readImage(b.data, 4e6);
     let video = null;
     if (b.video) {
@@ -204,6 +242,40 @@ const R = {
     const { data: c } = await db.from('comments').select('user_id').eq('id', b.id).maybeSingle();
     if (!c || (c.user_id !== u.id && !can(u, 'cmt'))) fail('Not allowed', 403);
     await db.from('comments').delete().eq('id', b.id);
+    return {};
+  },
+
+  // ---------- reports ----------
+  async report(req, b) {
+    const u = await authed(req), reason = txt(b.reason, 500), id = String(b.id || '');
+    if (reason.length < 3) fail('Please type a reason');
+    let reported, link, excerpt = null;
+    if (b.type === 'post') {
+      const { data: i } = await db.from('images').select('user_id').eq('id', id).maybeSingle();
+      if (!i) fail('Post not found', 404);
+      reported = i.user_id; link = `#/i/${id}`;
+    } else if (b.type === 'comment') {
+      const { data: c } = await db.from('comments').select('user_id,image_id,body').eq('id', id).maybeSingle();
+      if (!c) fail('Comment not found', 404);
+      reported = c.user_id; link = `#/i/${c.image_id}`; excerpt = c.body.slice(0, 150);
+    } else if (b.type === 'user') {
+      const { data: t } = await db.from('users').select('id,username').eq('id', id).maybeSingle();
+      if (!t) fail('User not found', 404);
+      reported = t.id; link = `#/u/${encodeURIComponent(t.username)}`;
+    } else fail('Invalid report');
+    if (reported === u.id) fail('You cannot report yourself');
+    const { error } = await db.from('reports').insert({ reporter_id: u.id, reported_id: reported, link, reason, excerpt, target: `${b.type}:${id}` });
+    if (error) fail(error.code === '23505' ? 'You already reported this' : 'Could not send the report', error.code === '23505' ? 409 : 500);
+    return {};
+  },
+  async reports(req) {
+    await authed(req, 'staff');
+    const { data } = await db.from('reports').select('id,link,reason,excerpt,created_at,reporter:users!reporter_id(username,tag,role),reported:users!reported_id(username,tag,role)').order('created_at', { ascending: false }).limit(100);
+    return { reports: data || [] };
+  },
+  async dismissreport(req, b) {
+    await authed(req, 'staff');
+    await db.from('reports').delete().eq('id', b.id);
     return {};
   },
 
@@ -291,14 +363,15 @@ const R = {
   },
 };
 
-const GET = new Set(['feed', 'image', 'me', 'users', 'tags', 'news', 'profile']);
+const GET = new Set(['feed', 'image', 'me', 'users', 'tags', 'news', 'profile', 'reports']);
 module.exports = async (req, res) => {
   try {
     const a = req.query.a;
     if (!Object.hasOwn(R, a) || GET.has(a) !== (req.method === 'GET')) fail('Not found', 404);
+    await guard(req, a);
     res.status(200).json(await R[a](req, req.body || {}));
   } catch (e) {
     if (!e.c) console.error(e);
-   res.status(e.c || 500).json({ error: e.c ? e.message : 'Server error: ' + e.message });
+    res.status(e.c || 500).json({ error: e.c ? e.message : 'Server error' });
   }
 };
