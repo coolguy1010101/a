@@ -11,7 +11,10 @@
 <body>
 <header>
   <a class="logo" href="#/">Snapshelf</a>
-  <input id="q" type="search" placeholder="Search images by title" aria-label="Search images">
+  <div class="search">
+    <input id="q" type="search" placeholder="Search titles or tags" aria-label="Search titles or tags" autocomplete="off">
+    <div id="sugg" hidden></div>
+  </div>
   <nav id="nav"></nav>
 </header>
 <div id="ban" hidden></div>
