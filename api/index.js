@@ -166,11 +166,12 @@ const R = {
 
   // ---------- posts (images and videos) ----------
   async feed(req) {
-    const q = txt(req.query.q, 50).replace(/[%_,()]/g, ''), tag = txt(req.query.tag, 30), uid = txt(req.query.uid, 40);
+    const q = txt(req.query.q, 50).replace(/[%_,()]/g, ''), uid = txt(req.query.uid, 40);
+    const tag = txt(req.query.tag, 200).split(',').map(t => t.trim()).filter(Boolean).slice(0, 5); // posts must have ALL of these tags
     const page = Math.max(1, +req.query.page || 1), N = 24;
     let s = db.from('images').select('id,title,path,kind,tags,users!user_id(username,tag,role),likes(count),comments(count)', { count: 'exact' }).order('created_at', { ascending: false }).range((page - 1) * N, page * N - 1);
     if (q) s = s.ilike('title', `%${q}%`);
-    if (tag) s = s.contains('tags', [tag]);
+    if (tag.length) s = s.contains('tags', tag);
     if (uid) s = s.eq('user_id', uid);
     const { data, count } = await s;
     return { total: count || 0, pages: Math.max(1, Math.ceil((count || 0) / N)), images: (data || []).map(i => ({ id: i.id, title: i.title, kind: i.kind, tags: i.tags, url: url(i.path), user: i.users, likes: i.likes[0].count, comments: i.comments[0].count })) };
