@@ -1,5 +1,5 @@
 const $ = s => document.querySelector(s), app = $('#app');
-let me = null, token = localStorage.getItem('t') || '', tagF = '';
+let me = null, token = localStorage.getItem('t') || '', tagF = [];
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
 const nm = u => (u.tag ? `<b class="tag">[${esc(u.tag)}]</b> ` : '') + `<span class="user">${esc(u.username)}</span>`;
@@ -11,7 +11,11 @@ const rank = u => ({ user: 0, staff: 1, senior: 2, owner: 3 })[u?.role] ?? 0;
 const can = p => rank(me) >= 2 || (rank(me) === 1 && (me.perms || []).includes(p));
 // Escapes text first, then turns http(s) links into clickable ones
 const links = s => esc(s).replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer nofollow">${u}</a>`);
-const setTag = t => { tagF = t; if (['', '#/'].includes(location.hash)) route(); };
+// Tag filters: a post must have ALL selected tags (up to 5)
+const go = () => location.hash.length > 2 ? (location.hash = '#/') : route();
+const setTag = t => { tagF = t ? [t] : []; go(); };
+const addTag = t => { if (!tagF.includes(t) && tagF.length < 5) tagF.push(t); go(); };
+const dropTag = t => { tagF = tagF.filter(x => x !== t); go(); };
 
 async function api(a, body, qs = '') {
   const r = await fetch(`/api?a=${a}${qs}`, {
@@ -140,9 +144,9 @@ const card = (i, extra = '') => `<div class="card">${i.kind === 'video' ? '<span
 const pager = (p, pages, base) => pages > 1 ? `<div class="pager">${p > 1 ? `<a href="${base}${p - 1}">Previous</a>` : ''}<span>Page ${p} of ${pages}</span>${p < pages ? `<a href="${base}${p + 1}">Next</a>` : ''}</div>` : '';
 
 async function feed(p = 1) {
-  const qs = `&page=${p}&tag=${encodeURIComponent(tagF)}&q=${encodeURIComponent($('#q').value)}`;
+  const qs = `&page=${p}&tag=${encodeURIComponent(tagF.join(','))}&q=${encodeURIComponent($('#q').value)}`;
   const { images, pages } = await api('feed', null, qs);
-  page(`${tagF ? `<p>Showing posts tagged <b>${esc(tagF)}</b> <a href="#/" onclick="setTag('')">Clear</a></p>` : ''}
+  page(`${tagF.length ? `<div class="chips">${tagF.map(t => `<a href="#/" onclick="dropTag('${esc(t)}');return false" class="on">${esc(t)} ×</a>`).join('')}<a href="#/" onclick="setTag('');return false">Clear all</a></div>` : ''}
     <div class="grid">${images.map(i => card(i)).join('') || '<p>No posts found.</p>'}</div>${pager(p, pages, '#/page/')}`);
 }
 
@@ -173,10 +177,10 @@ const delCmt = id => confirm('Delete this comment?') && act(async () => { await 
 async function upload() {
   if (needLogin()) return;
   const { tags } = await api('tags');
-  page(`<h2>Upload</h2><form id="up" class="box"><input name="title" placeholder="Title" maxlength="65" required>
-    <textarea name="descr" placeholder="Description (optional)" maxlength="350"></textarea>
+  page(`<h2>Upload</h2><form id="up" class="box"><input name="title" placeholder="Title" maxlength="100" required>
+    <textarea name="descr" placeholder="Description (optional)" maxlength="1000"></textarea>
     <div class="chips">${tags.map(t => `<label><input type="checkbox" name="tags" value="${esc(t)}"> ${esc(t)}</label>`).join('')}</div>
-    <input name="newtags" placeholder="Add tags, separated by commas (5 max)" maxlength="90">
+    <input name="newtags" placeholder="Add tags, separated by commas (5 max)" maxlength="100">
     <input type="file" id="file" accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" required>
     <div id="pv" class="preview"></div>
     <small>Images are resized automatically. Videos can be up to ${MAXV / 60} minutes and ${MAXB / 1048576} MB (MP4 works best).</small>
@@ -236,7 +240,7 @@ function auth() {
 function settings() {
   if (needLogin()) return;
   page(`<h2>Account settings</h2><p>Signed in as ${who(me)} (${esc(me.email)})</p>
-    <form id="pf" class="box"><h3>Profile</h3><textarea name="bio" maxlength="180" placeholder="Describe yourself (180 characters max)">${esc(me.bio)}</textarea>
+    <form id="pf" class="box"><h3>Profile</h3><textarea name="bio" maxlength="300" placeholder="Describe yourself (300 characters max)">${esc(me.bio)}</textarea>
     <div id="avpv"></div><label>Profile picture <input type="file" id="av" accept="image/*"></label><button>Save profile</button><span class="msg"></span></form>
     <form id="em" class="box"><h3>Change email</h3><input name="email" type="email" placeholder="New email" required>
     <input name="password" type="password" placeholder="Current password" required><button>Save email</button><span class="msg"></span></form>
@@ -325,11 +329,11 @@ $('#q').onchange = () => location.hash.length > 2 ? (location.hash = '#/') : rou
 let allTags = [], hi = -1;
 const q = $('#q'), sugg = $('#sugg');
 const loadTags = async () => { try { allTags = (await api('tags')).tags; } catch {} };
-const pickTag = t => { tagF = t; q.value = ''; sugg.hidden = true; hi = -1; location.hash.length > 2 ? (location.hash = '#/') : route(); };
+const pickTag = t => { sugg.hidden = true; hi = -1; q.value = ''; addTag(t); };
 q.onfocus = loadTags; // keeps the list fresh when new tags have been created
 q.oninput = () => {
   const v = q.value.trim().toLowerCase().replace(/^#/, ''); hi = -1;
-  const m = v ? allTags.filter(t => t.startsWith(v)).slice(0, 8) : [];
+  const m = v ? allTags.filter(t => t.startsWith(v) && !tagF.includes(t)).slice(0, 8) : [];
   sugg.innerHTML = m.map(t => `<button type="button" data-t="${esc(t)}">${esc(t)}</button>`).join('');
   sugg.hidden = !m.length;
 };
