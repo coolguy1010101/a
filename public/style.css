@@ -63,3 +63,11 @@ button.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
 .rules{max-width:640px}
 .rules ol{padding-left:1.4rem}
 .rules li{margin:.7rem 0;font-size:1.15rem;font-weight:600}
+
+/* tag autofill and previews */
+.search{position:relative;flex:1;min-width:150px;max-width:420px}
+.search input{width:100%;max-width:none}
+#sugg{position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:7px;overflow:hidden;z-index:10}
+#sugg button{display:block;width:100%;text-align:left;background:none;color:var(--ink);font-weight:400;border-radius:0}
+#sugg button:hover,#sugg button.on{background:var(--bg)}
+.preview img,.preview video{max-width:100%;max-height:280px;display:block;border:1px solid var(--line);border-radius:3px;background:#000}
