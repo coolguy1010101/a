@@ -141,8 +141,8 @@ const pager = (p, pages, base) => pages > 1 ? `<div class="pager">${p > 1 ? `<a 
 
 async function feed(p = 1) {
   const qs = `&page=${p}&tag=${encodeURIComponent(tagF)}&q=${encodeURIComponent($('#q').value)}`;
-  const [{ images, pages }, { tags }] = await Promise.all([api('feed', null, qs), api('tags')]);
-  page(`<div class="chips"><a href="#/" onclick="setTag('')" class="${tagF ? '' : 'on'}">All</a>${tags.map(t => `<a href="#/" onclick="setTag('${esc(t)}')" class="${t === tagF ? 'on' : ''}">${esc(t)}</a>`).join('')}</div>
+  const { images, pages } = await api('feed', null, qs);
+  page(`${tagF ? `<p>Showing posts tagged <b>${esc(tagF)}</b> <a href="#/" onclick="setTag('')">Clear</a></p>` : ''}
     <div class="grid">${images.map(i => card(i)).join('') || '<p>No posts found.</p>'}</div>${pager(p, pages, '#/page/')}`);
 }
 
@@ -173,11 +173,12 @@ const delCmt = id => confirm('Delete this comment?') && act(async () => { await 
 async function upload() {
   if (needLogin()) return;
   const { tags } = await api('tags');
-  page(`<h2>Upload</h2><form id="up" class="box"><input name="title" placeholder="Title" maxlength="100" required>
-    <textarea name="descr" placeholder="Description (optional)" maxlength="1000"></textarea>
+  page(`<h2>Upload</h2><form id="up" class="box"><input name="title" placeholder="Title" maxlength="65" required>
+    <textarea name="descr" placeholder="Description (optional)" maxlength="350"></textarea>
     <div class="chips">${tags.map(t => `<label><input type="checkbox" name="tags" value="${esc(t)}"> ${esc(t)}</label>`).join('')}</div>
-    <input name="newtags" placeholder="Add tags, separated by commas (5 max)" maxlength="100">
+    <input name="newtags" placeholder="Add tags, separated by commas (5 max)" maxlength="90">
     <input type="file" id="file" accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" required>
+    <div id="pv" class="preview"></div>
     <small>Images are resized automatically. Videos can be up to ${MAXV / 60} minutes and ${MAXB / 1048576} MB (MP4 works best).</small>
     <small>Please follow the <a href="#/rules">rules</a>: no reuploads, no stolen work, correct tags, no AI imagery or videos.</small>
     <button>Upload</button><small id="st"></small><span class="msg"></span></form>`,
@@ -235,8 +236,8 @@ function auth() {
 function settings() {
   if (needLogin()) return;
   page(`<h2>Account settings</h2><p>Signed in as ${who(me)} (${esc(me.email)})</p>
-    <form id="pf" class="box"><h3>Profile</h3><textarea name="bio" maxlength="300" placeholder="Describe yourself (300 characters max)">${esc(me.bio)}</textarea>
-    <label>Profile picture <input type="file" id="av" accept="image/*"></label><button>Save profile</button><span class="msg"></span></form>
+    <form id="pf" class="box"><h3>Profile</h3><textarea name="bio" maxlength="180" placeholder="Describe yourself (180 characters max)">${esc(me.bio)}</textarea>
+    <div id="avpv"></div><label>Profile picture <input type="file" id="av" accept="image/*"></label><button>Save profile</button><span class="msg"></span></form>
     <form id="em" class="box"><h3>Change email</h3><input name="email" type="email" placeholder="New email" required>
     <input name="password" type="password" placeholder="Current password" required><button>Save email</button><span class="msg"></span></form>
     <form id="pw" class="box"><h3>Change password</h3><input name="old" type="password" placeholder="Current password" required>
@@ -319,4 +320,43 @@ async function route() {
 }
 addEventListener('hashchange', route);
 $('#q').onchange = () => location.hash.length > 2 ? (location.hash = '#/') : route();
+
+// ---------- tag autofill (search bar) and file previews ----------
+let allTags = [], hi = -1;
+const q = $('#q'), sugg = $('#sugg');
+const loadTags = async () => { try { allTags = (await api('tags')).tags; } catch {} };
+const pickTag = t => { tagF = t; q.value = ''; sugg.hidden = true; hi = -1; location.hash.length > 2 ? (location.hash = '#/') : route(); };
+q.onfocus = loadTags; // keeps the list fresh when new tags have been created
+q.oninput = () => {
+  const v = q.value.trim().toLowerCase().replace(/^#/, ''); hi = -1;
+  const m = v ? allTags.filter(t => t.startsWith(v)).slice(0, 8) : [];
+  sugg.innerHTML = m.map(t => `<button type="button" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+  sugg.hidden = !m.length;
+};
+q.onkeydown = e => {
+  const it = [...sugg.children]; if (sugg.hidden || !it.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); hi = (hi + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length;
+    it.forEach((b, i) => b.classList.toggle('on', i === hi));
+  } else if (e.key === 'Enter' && hi >= 0) { e.preventDefault(); pickTag(it[hi].dataset.t); }
+  else if (e.key === 'Escape') sugg.hidden = true;
+};
+sugg.onmousedown = e => { const t = e.target.dataset.t; if (t) { e.preventDefault(); pickTag(t); } };
+q.onblur = () => sugg.hidden = true;
+
+function preview(input, box, cls = '') {
+  if (box.dataset.u) URL.revokeObjectURL(box.dataset.u);
+  box.innerHTML = ''; delete box.dataset.u;
+  const f = input.files[0]; if (!f) return;
+  const isV = !cls && (f.type.startsWith('video/') || vtype(f).startsWith('video/'));
+  const el = document.createElement(isV ? 'video' : 'img'), u = URL.createObjectURL(f);
+  box.dataset.u = u; el.src = u; if (cls) el.className = cls;
+  if (isV) { el.controls = true; el.muted = true; el.preload = 'metadata'; }
+  box.appendChild(el);
+}
+app.addEventListener('change', e => {
+  if (e.target.id === 'file') preview(e.target, $('#pv'));
+  if (e.target.id === 'av') preview(e.target, $('#avpv'), 'avatar');
+});
+loadTags();
 boot().then(route);
